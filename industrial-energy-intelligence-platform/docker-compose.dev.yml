@@ -1,0 +1,53 @@
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: ieip_db_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ieip
+      POSTGRES_USER: ieip_user
+      POSTGRES_PASSWORD: ieip_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_dev_data:/var/lib/postgresql/data
+      - ./infrastructure/database/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./infrastructure/database/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    container_name: ieip_mqtt_dev
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./infrastructure/mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/backend.Dockerfile
+    container_name: ieip_backend_dev
+    restart: unless-stopped
+    depends_on:
+      - db
+      - mqtt
+    environment:
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ieip
+      DATABASE_USER: ieip_user
+      DATABASE_PASSWORD: ieip_secret
+      MQTT_BROKER_HOST: mqtt
+      MQTT_BROKER_PORT: 1883
+      ENVIRONMENT: development
+      DEBUG: "true"
+      SECRET_KEY: dev_secret_key_change_in_production_1234567890
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+volumes:
+  timescale_dev_data:

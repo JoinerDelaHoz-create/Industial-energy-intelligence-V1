@@ -1,0 +1,75 @@
+services:
+  # TimescaleDB (PostgreSQL 16 + TimescaleDB Extension)
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: ieip_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ieip}
+      POSTGRES_USER: ${POSTGRES_USER:-ieip_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ieip_secret}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./infrastructure/database/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./infrastructure/database/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ieip_user} -d ${POSTGRES_DB:-ieip}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Mosquitto MQTT Broker
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    container_name: ieip_mqtt
+    restart: unless-stopped
+    ports:
+      - "${MQTT_BROKER_PORT:-1883}:1883"
+    volumes:
+      - ./infrastructure/mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  # Backend (FastAPI + Acquisition + Analytics Engine)
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/backend.Dockerfile
+    container_name: ieip_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    environment:
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${POSTGRES_DB:-ieip}
+      DATABASE_USER: ${POSTGRES_USER:-ieip_user}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-ieip_secret}
+      MQTT_BROKER_HOST: mqtt
+      MQTT_BROKER_PORT: 1883
+      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production_1234567890}
+      ENVIRONMENT: production
+    ports:
+      - "8000:8000"
+
+  # Frontend (React 19 + Vite + Nginx)
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/frontend.Dockerfile
+    container_name: ieip_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  timescale_data:
+  mosquitto_data:
+  mosquitto_log:
